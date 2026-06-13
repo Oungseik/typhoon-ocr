@@ -4,6 +4,7 @@ import sys
 import time
 import urllib.request
 import json
+import shlex
 from pathlib import Path as LocalPath
 
 from cog import BasePredictor, Input, Path
@@ -23,18 +24,81 @@ class Predictor(BasePredictor):
         self.log_path = LocalPath("/tmp/vllm-typhoon-ocr.log")
         self.log_file = None
         self.server = None
+        self.server_command = None
 
-    def _start_server(self) -> None:
-        vllm_python = os.getenv("VLLM_PYTHON")
-        if not vllm_python:
-            replicate_vllm_python = LocalPath("/opt/vllm/bin/python")
-            vllm_python = (
-                str(replicate_vllm_python)
-                if replicate_vllm_python.exists()
-                else sys.executable
+    def _gpu_memory_mib(self) -> int | None:
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=memory.total",
+                    "--format=csv,noheader,nounits",
+                    "-i",
+                    "0",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
+            return int(result.stdout.strip().splitlines()[0])
+        except Exception:
+            return None
+
+    def _default_max_model_len(self) -> str:
+        gpu_memory_mib = self._gpu_memory_mib()
+        if gpu_memory_mib is not None and gpu_memory_mib <= 20 * 1024:
+            return "4096"
+        return "8192"
+
+    def _default_gpu_memory_utilization(self) -> str:
+        gpu_memory_mib = self._gpu_memory_mib()
+        if gpu_memory_mib is not None and gpu_memory_mib <= 20 * 1024:
+            return "0.80"
+        return "0.90"
+
+    def _vllm_python(self) -> str:
+        vllm_python = os.getenv("VLLM_PYTHON")
+        if vllm_python:
+            return vllm_python
+
+        replicate_vllm_python = LocalPath("/opt/vllm/bin/python")
+        if replicate_vllm_python.exists():
+            return str(replicate_vllm_python)
+
+        return sys.executable
+
+    def _build_vllm_command(
+        self,
+        vllm_max_model_len: int = 0,
+        vllm_gpu_memory_utilization: float = 0.0,
+        vllm_cpu_offload_gb: float = 0.0,
+        vllm_extra_args: str = "",
+    ) -> list[str]:
+        max_model_len = (
+            str(vllm_max_model_len)
+            if vllm_max_model_len > 0
+            else os.getenv("TYPHOON_OCR_MAX_MODEL_LEN", self._default_max_model_len())
+        )
+        gpu_memory_utilization = (
+            str(vllm_gpu_memory_utilization)
+            if vllm_gpu_memory_utilization > 0
+            else os.getenv(
+                "TYPHOON_OCR_GPU_MEMORY_UTILIZATION",
+                self._default_gpu_memory_utilization(),
+            )
+        )
+        cpu_offload_gb = (
+            str(vllm_cpu_offload_gb)
+            if vllm_cpu_offload_gb > 0
+            else os.getenv("TYPHOON_OCR_CPU_OFFLOAD_GB", "0")
+        )
+        extra_args = vllm_extra_args.strip() or os.getenv(
+            "TYPHOON_OCR_VLLM_EXTRA_ARGS", ""
+        )
+
         command = [
-            vllm_python,
+            self._vllm_python(),
             "-m",
             "vllm.entrypoints.openai.api_server",
             "--model",
@@ -48,12 +112,29 @@ class Predictor(BasePredictor):
             "--dtype",
             os.getenv("TYPHOON_OCR_DTYPE", "float16"),
             "--max-model-len",
-            os.getenv("TYPHOON_OCR_MAX_MODEL_LEN", "8192"),
+            max_model_len,
             "--max-num-seqs",
             os.getenv("TYPHOON_OCR_MAX_NUM_SEQS", "1"),
+            "--gpu-memory-utilization",
+            gpu_memory_utilization,
             "--enforce-eager",
             "--trust-remote-code",
         ]
+
+        if cpu_offload_gb and float(cpu_offload_gb) > 0:
+            command.extend(["--cpu-offload-gb", cpu_offload_gb])
+
+        if extra_args:
+            command.extend(shlex.split(extra_args))
+
+        return command
+
+    def _start_server(self, command: list[str]) -> None:
+        os.environ.setdefault(
+            "PYTORCH_CUDA_ALLOC_CONF",
+            "expandable_segments:True",
+        )
+        print(f"Starting vLLM: {shlex.join(command)}", flush=True)
 
         self.log_file = self.log_path.open("w")
         self.server = subprocess.Popen(
@@ -62,12 +143,19 @@ class Predictor(BasePredictor):
             stderr=subprocess.STDOUT,
             text=True,
         )
+        self.server_command = command
         self._wait_for_server()
 
-    def _ensure_server(self) -> None:
+    def _ensure_server(self, command: list[str]) -> None:
         if self.server is not None and self.server.poll() is None:
+            if self.server_command != command:
+                raise RuntimeError(
+                    "vLLM is already running with different startup settings in "
+                    "this warm Replicate worker. Use the same vLLM settings, or "
+                    "restart the deployment/model worker before changing them."
+                )
             return
-        self._start_server()
+        self._start_server(command)
 
     def _wait_for_server(self) -> None:
         deadline = time.time() + int(os.getenv("VLLM_STARTUP_TIMEOUT", "1800"))
@@ -174,7 +262,7 @@ class Predictor(BasePredictor):
         ),
         max_tokens: int = Input(
             description="Maximum generated tokens.",
-            default=4096,
+            default=2048,
             ge=1,
             le=8192,
         ),
@@ -196,8 +284,36 @@ class Predictor(BasePredictor):
             ge=0.0,
             le=2.0,
         ),
+        vllm_max_model_len: int = Input(
+            description="Advanced: vLLM startup max context length. Use 0 for the hardware-aware default.",
+            default=0,
+            ge=0,
+            le=32768,
+        ),
+        vllm_gpu_memory_utilization: float = Input(
+            description="Advanced: fraction of GPU memory vLLM may reserve. Use 0 for the hardware-aware default.",
+            default=0.0,
+            ge=0.0,
+            le=1.0,
+        ),
+        vllm_cpu_offload_gb: float = Input(
+            description="Advanced: CPU weight offload in GiB. Use 0 to disable offload.",
+            default=0.0,
+            ge=0.0,
+            le=64.0,
+        ),
+        vllm_extra_args: str = Input(
+            description="Advanced: extra vLLM startup args, for example --disable-log-requests.",
+            default="",
+        ),
     ) -> str:
-        self._ensure_server()
+        command = self._build_vllm_command(
+            vllm_max_model_len=vllm_max_model_len,
+            vllm_gpu_memory_utilization=vllm_gpu_memory_utilization,
+            vllm_cpu_offload_gb=vllm_cpu_offload_gb,
+            vllm_extra_args=vllm_extra_args,
+        )
+        self._ensure_server(command)
 
         file_path = str(file)
         page_numbers = [1]

@@ -72,6 +72,34 @@ local vLLM server and exposes a playground-style form with:
 
 Use `examples/invoice.png` as a sample image when testing the Replicate model page.
 
+To deploy without local Docker, add a GitHub repository secret named
+`REPLICATE_API_TOKEN` with the token from `https://replicate.com/auth/token`.
+Pushing deployment-related files to `master` runs the `Deploy to Replicate`
+GitHub Action, or you can trigger it manually from the Actions tab. The default
+target is `r8.im/oungseik/typhoon-ocr`.
+
+For 16 GB GPUs such as T4, the wrapper uses lower-memory vLLM defaults:
+
+- `TYPHOON_OCR_MAX_MODEL_LEN=4096`
+- `TYPHOON_OCR_GPU_MEMORY_UTILIZATION=0.80`
+- `TYPHOON_OCR_MAX_NUM_SEQS=1`
+
+You can override these in the model version environment. If startup still fails
+with CUDA OOM while loading weights, set `TYPHOON_OCR_CPU_OFFLOAD_GB=2` or use a
+larger Replicate GPU.
+
+The same settings are also exposed as advanced prediction inputs:
+
+- `vllm_max_model_len`
+- `vllm_gpu_memory_utilization`
+- `vllm_cpu_offload_gb`
+- `vllm_extra_args`
+
+After this version is pushed once, use those inputs from the Replicate playground
+or API to tune startup memory without rebuilding the image. vLLM runs as a warm
+server inside the worker, so the first prediction in a warm worker fixes these
+startup settings until the worker is restarted.
+
 ### Dependencies
 
 - openai

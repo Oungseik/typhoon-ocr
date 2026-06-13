@@ -1,0 +1,41 @@
+name: Deploy to Replicate
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Replicate image slug
+        required: true
+        default: r8.im/oungseik/typhoon-ocr
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/deploy-replicate.yml
+      - cog.yaml
+      - predict.py
+      - replicate-requirements.txt
+      - packages/**
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Cog
+        run: |
+          sudo curl -o /usr/local/bin/cog -L "https://github.com/replicate/cog/releases/latest/download/cog_$(uname -s)_$(uname -m)"
+          sudo chmod +x /usr/local/bin/cog
+
+      - name: Log in to Replicate
+        env:
+          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
+        run: |
+          test -n "$REPLICATE_API_TOKEN"
+          printf '%s' "$REPLICATE_API_TOKEN" | cog login --token-stdin
+
+      - name: Push Cog image
+        run: cog push "${{ github.event.inputs.image || 'r8.im/oungseik/typhoon-ocr' }}"
