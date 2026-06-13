@@ -21,7 +21,10 @@ class Predictor(BasePredictor):
         self.model_id = os.getenv("TYPHOON_OCR_MODEL_ID", "typhoon-ai/typhoon-ocr-7b")
         self.served_model = os.getenv("TYPHOON_OCR_SERVED_MODEL", "typhoon-ocr")
         self.log_path = LocalPath("/tmp/vllm-typhoon-ocr.log")
+        self.log_file = None
+        self.server = None
 
+    def _start_server(self) -> None:
         command = [
             "vllm",
             "serve",
@@ -33,9 +36,12 @@ class Predictor(BasePredictor):
             "--served-model-name",
             self.served_model,
             "--dtype",
-            "bfloat16",
+            os.getenv("TYPHOON_OCR_DTYPE", "float16"),
             "--max-model-len",
-            os.getenv("TYPHOON_OCR_MAX_MODEL_LEN", "32000"),
+            os.getenv("TYPHOON_OCR_MAX_MODEL_LEN", "8192"),
+            "--max-num-seqs",
+            os.getenv("TYPHOON_OCR_MAX_NUM_SEQS", "1"),
+            "--enforce-eager",
             "--trust-remote-code",
         ]
 
@@ -47,6 +53,11 @@ class Predictor(BasePredictor):
             text=True,
         )
         self._wait_for_server()
+
+    def _ensure_server(self) -> None:
+        if self.server is not None and self.server.poll() is None:
+            return
+        self._start_server()
 
     def _wait_for_server(self) -> None:
         deadline = time.time() + int(os.getenv("VLLM_STARTUP_TIMEOUT", "1800"))
@@ -74,7 +85,8 @@ class Predictor(BasePredictor):
 
     def _tail_logs(self, max_chars: int = 6000) -> str:
         try:
-            self.log_file.flush()
+            if self.log_file is not None:
+                self.log_file.flush()
             text = self.log_path.read_text(errors="replace")
             return text[-max_chars:]
         except Exception as error:
@@ -152,9 +164,9 @@ class Predictor(BasePredictor):
         ),
         max_tokens: int = Input(
             description="Maximum generated tokens.",
-            default=16384,
+            default=4096,
             ge=1,
-            le=32768,
+            le=8192,
         ),
         temperature: float = Input(
             description="Sampling temperature.",
@@ -175,6 +187,8 @@ class Predictor(BasePredictor):
             le=2.0,
         ),
     ) -> str:
+        self._ensure_server()
+
         file_path = str(file)
         page_numbers = [1]
         if LocalPath(file_path).suffix.lower() == ".pdf":
