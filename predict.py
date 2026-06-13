@@ -1,10 +1,14 @@
 import os
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path as LocalPath
 
 from cog import BasePredictor, Input, Path
+
+sys.path.insert(0, str(LocalPath(__file__).parent / "packages" / "typhoon_ocr"))
+
 from typhoon_ocr import ocr_document
 
 

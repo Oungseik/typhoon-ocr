@@ -4,4 +4,3 @@ pypdf
 pillow
 requests
 vllm
--e ./packages/typhoon_ocr
