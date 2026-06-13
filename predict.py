@@ -26,8 +26,10 @@ class Predictor(BasePredictor):
 
     def _start_server(self) -> None:
         command = [
-            "vllm",
-            "serve",
+            sys.executable,
+            "-m",
+            "vllm.entrypoints.openai.api_server",
+            "--model",
             self.model_id,
             "--host",
             "127.0.0.1",
