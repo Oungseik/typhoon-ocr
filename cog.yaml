@@ -1,0 +1,9 @@
+build:
+  gpu: true
+  python_version: "3.11"
+  system_packages:
+    - "git"
+    - "poppler-utils"
+  python_requirements: replicate-requirements.txt
+
+predict: "predict.py:Predictor"
