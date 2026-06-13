@@ -72,11 +72,10 @@ local vLLM server and exposes a playground-style form with:
 
 Use `examples/invoice.png` as a sample image when testing the Replicate model page.
 
-To deploy without local Docker, add a GitHub repository secret named
-`REPLICATE_API_TOKEN` with the token from `https://replicate.com/auth/token`.
-Pushing deployment-related files to `master` runs the `Deploy to Replicate`
-GitHub Action, or you can trigger it manually from the Actions tab. The default
-target is `r8.im/oungseik/typhoon-ocr`.
+To deploy without local Docker, use the `Push to Replicate` GitHub Action. It
+expects a repository secret named `REPLICATE_CLI_AUTH_TOKEN` with the token from
+`https://replicate.com/auth/token`. Trigger the workflow with model name
+`oungseik/typhoon-ocr`.
 
 For 16 GB GPUs such as T4, the wrapper uses lower-memory vLLM defaults:
 
