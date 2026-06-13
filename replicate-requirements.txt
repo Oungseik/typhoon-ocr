@@ -3,4 +3,6 @@ ftfy
 pypdf
 pillow
 requests
+pydantic>=2.9,<3
+fastapi>=0.115,<1
 vllm
