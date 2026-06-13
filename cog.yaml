@@ -5,5 +5,9 @@ build:
     - "git"
     - "poppler-utils"
   python_requirements: replicate-requirements.txt
+  run:
+    - "python -m venv /opt/vllm"
+    - "/opt/vllm/bin/pip install --upgrade pip"
+    - "/opt/vllm/bin/pip install 'pydantic>=2.9,<3' 'fastapi>=0.115,<1' vllm"
 
 predict: "predict.py:Predictor"

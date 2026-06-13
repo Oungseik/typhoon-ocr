@@ -25,8 +25,9 @@ class Predictor(BasePredictor):
         self.server = None
 
     def _start_server(self) -> None:
+        vllm_python = os.getenv("VLLM_PYTHON", "/opt/vllm/bin/python")
         command = [
-            sys.executable,
+            vllm_python,
             "-m",
             "vllm.entrypoints.openai.api_server",
             "--model",
