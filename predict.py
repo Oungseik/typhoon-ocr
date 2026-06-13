@@ -3,13 +3,15 @@ import subprocess
 import sys
 import time
 import urllib.request
+import json
 from pathlib import Path as LocalPath
 
 from cog import BasePredictor, Input, Path
+from openai import OpenAI
 
 sys.path.insert(0, str(LocalPath(__file__).parent / "packages" / "typhoon_ocr"))
 
-from typhoon_ocr import ocr_document
+from typhoon_ocr import prepare_ocr_messages
 
 
 class Predictor(BasePredictor):
@@ -78,42 +80,125 @@ class Predictor(BasePredictor):
         except Exception as error:
             return f"Could not read vLLM logs: {error}"
 
+    def _parse_pages(self, pages: str) -> list[int]:
+        if not pages.strip():
+            return [1]
+
+        parsed_pages = set()
+        for part in pages.split(","):
+            value = part.strip()
+            if not value:
+                continue
+            if "-" in value:
+                start_text, end_text = value.split("-", 1)
+                start = int(start_text.strip())
+                end = int(end_text.strip())
+                if start < 1 or end < start:
+                    raise ValueError(f"Invalid page range: {value}")
+                parsed_pages.update(range(start, end + 1))
+            else:
+                page = int(value)
+                if page < 1:
+                    raise ValueError(f"Invalid page number: {value}")
+                parsed_pages.add(page)
+
+        return sorted(parsed_pages) or [1]
+
+    def _run_ocr(
+        self,
+        file_path: str,
+        task_type: str,
+        page_number: int,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        repetition_penalty: float,
+    ) -> str:
+        messages = prepare_ocr_messages(
+            pdf_or_image_path=file_path,
+            task_type=task_type,
+            page_num=page_number,
+            figure_language="Thai",
+        )
+        client = OpenAI(base_url=self.base_url, api_key="no-key")
+        response = client.chat.completions.create(
+            model=self.served_model,
+            messages=messages,
+            max_tokens=max_tokens,
+            extra_body={
+                "temperature": temperature,
+                "top_p": top_p,
+                "repetition_penalty": repetition_penalty,
+            },
+        )
+        text_output = response.choices[0].message.content
+        if task_type == "v1.5":
+            return text_output
+        return json.loads(text_output)["natural_text"]
+
     def predict(
         self,
-        document: Path = Input(
-            description="PDF or image file to OCR. Supported: PDF, PNG, JPG, JPEG."
+        file: Path = Input(
+            description="Image or PDF file to OCR. Supported: PDF, PNG, JPG, JPEG."
         ),
         task_type: str = Input(
             description="OCR prompt mode.",
-            default="default",
+            default="v1.5",
             choices=["default", "structure", "v1.5"],
         ),
-        page_number: int = Input(
-            description="1-indexed page number for PDFs. Images always use page 1.",
-            default=1,
+        pages: str = Input(
+            description="PDF pages to process, for example 1, 1,3, or 1-3. Images always use page 1.",
+            default="",
         ),
-        target_image_dim: int = Input(
-            description="Longest rendered image dimension in pixels.",
-            default=1800,
+        max_tokens: int = Input(
+            description="Maximum generated tokens.",
+            default=16384,
+            ge=1,
+            le=32768,
         ),
-        target_text_length: int = Input(
-            description="Maximum PDF anchor text length for default/structure modes.",
-            default=8000,
+        temperature: float = Input(
+            description="Sampling temperature.",
+            default=0.1,
+            ge=0.0,
+            le=2.0,
         ),
-        figure_language: str = Input(
-            description="Language for figure descriptions in v1.5 mode.",
-            default="Thai",
-            choices=["Thai", "English"],
+        top_p: float = Input(
+            description="Nucleus sampling top-p value.",
+            default=0.6,
+            ge=0.0,
+            le=1.0,
+        ),
+        repetition_penalty: float = Input(
+            description="Repetition penalty.",
+            default=1.2,
+            ge=0.0,
+            le=2.0,
         ),
     ) -> str:
-        return ocr_document(
-            str(document),
-            task_type=task_type,
-            target_image_dim=target_image_dim,
-            target_text_length=target_text_length,
-            page_num=page_number,
-            base_url=self.base_url,
-            api_key="no-key",
-            model=self.served_model,
-            figure_language=figure_language,
+        file_path = str(file)
+        page_numbers = [1]
+        if LocalPath(file_path).suffix.lower() == ".pdf":
+            page_numbers = self._parse_pages(pages)
+
+        results = [
+            (
+                page_number,
+                self._run_ocr(
+                    file_path=file_path,
+                    task_type=task_type,
+                    page_number=page_number,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    repetition_penalty=repetition_penalty,
+                ),
+            )
+            for page_number in page_numbers
+        ]
+
+        if len(results) == 1:
+            return results[0][1]
+
+        return "\n\n---\n\n".join(
+            f"## Page {page_number}\n\n{text}" for page_number, text in results
         )

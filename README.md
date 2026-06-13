@@ -60,6 +60,18 @@ vllm serve scb10x/typhoon-ocr-7b --served-model-name typhoon-ocr --dtype bfloat1
 python app.py
 ```
 
+### Replicate deployment
+
+This fork includes a Replicate/Cog wrapper in `predict.py`. The wrapper starts the
+local vLLM server and exposes a playground-style form with:
+
+- `file`: image or PDF input
+- `task_type`: `default`, `structure`, or `v1.5`
+- `pages`: PDF page selection such as `1`, `1,3`, or `1-3`
+- `max_tokens`, `temperature`, `top_p`, `repetition_penalty`: generation settings
+
+Use `examples/invoice.png` as a sample image when testing the Replicate model page.
+
 ### Dependencies
 
 - openai
