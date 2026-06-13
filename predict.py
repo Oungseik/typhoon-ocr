@@ -25,7 +25,14 @@ class Predictor(BasePredictor):
         self.server = None
 
     def _start_server(self) -> None:
-        vllm_python = os.getenv("VLLM_PYTHON", "/opt/vllm/bin/python")
+        vllm_python = os.getenv("VLLM_PYTHON")
+        if not vllm_python:
+            replicate_vllm_python = LocalPath("/opt/vllm/bin/python")
+            vllm_python = (
+                str(replicate_vllm_python)
+                if replicate_vllm_python.exists()
+                else sys.executable
+            )
         command = [
             vllm_python,
             "-m",
