@@ -57,6 +57,13 @@ class Predictor(BasePredictor):
             return "0.80"
         return "0.90"
 
+    def _default_cpu_offload_gb(self) -> str:
+        gpu_memory_mib = self._gpu_memory_mib()
+        if gpu_memory_mib is not None and gpu_memory_mib <= 20 * 1024:
+            # ponytail: T4-class GPUs cannot reliably fit 7B fp16 weights.
+            return "4"
+        return "0"
+
     def _vllm_python(self) -> str:
         vllm_python = os.getenv("VLLM_PYTHON")
         if vllm_python:
@@ -91,7 +98,10 @@ class Predictor(BasePredictor):
         cpu_offload_gb = (
             str(vllm_cpu_offload_gb)
             if vllm_cpu_offload_gb > 0
-            else os.getenv("TYPHOON_OCR_CPU_OFFLOAD_GB", "0")
+            else os.getenv(
+                "TYPHOON_OCR_CPU_OFFLOAD_GB",
+                self._default_cpu_offload_gb(),
+            )
         )
         extra_args = vllm_extra_args.strip() or os.getenv(
             "TYPHOON_OCR_VLLM_EXTRA_ARGS", ""

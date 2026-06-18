@@ -81,11 +81,11 @@ For 16 GB GPUs such as T4, the wrapper uses lower-memory vLLM defaults:
 
 - `TYPHOON_OCR_MAX_MODEL_LEN=4096`
 - `TYPHOON_OCR_GPU_MEMORY_UTILIZATION=0.80`
+- `TYPHOON_OCR_CPU_OFFLOAD_GB=4`
 - `TYPHOON_OCR_MAX_NUM_SEQS=1`
 
 You can override these in the model version environment. If startup still fails
-with CUDA OOM while loading weights, set `TYPHOON_OCR_CPU_OFFLOAD_GB=2` or use a
-larger Replicate GPU.
+with CUDA OOM while loading weights, use a larger Replicate GPU.
 
 The same settings are also exposed as advanced prediction inputs:
 
